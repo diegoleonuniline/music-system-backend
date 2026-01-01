@@ -19,16 +19,17 @@ app.use(cors());
 app.use(express.json());
 
 // Rutas
-app.use('/api/auth', authRoutes);
-app.use('/api/groups', groupsRoutes);
-app.use('/api/songs', songsRoutes);
-app.use('/api/setlists', setlistsRoutes);
-app.use('/api/events', eventsRoutes);
-app.use('/api/rehearsals', rehearsalsRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/plans', plansRoutes);
-app.use('/api/categories', categoriesRoutes);
-app.use('/api/genres', genresRoutes);
+// Rutas
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/plans', require('./routes/plans'));
+app.use('/api/groups', require('./routes/groups'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/categories', require('./routes/categories'));
+app.use('/api/genres', require('./routes/genres'));
+app.use('/api/songs', require('./routes/songs'));
+app.use('/api/setlists', require('./routes/setlists'));
+app.use('/api/events', require('./routes/events'));
+app.use('/api/rehearsals', require('./routes/rehearsals'));
 
 // Ruta de prueba
 app.get('/', (req, res) => {

@@ -29,7 +29,7 @@ router.get('/', verifyToken, async (req, res) => {
 router.post('/', verifyToken, isGroupAdmin, async (req, res) => {
   try {
     const { email, password, first_name, last_name, phone, role } = req.body;
-    const group_id = req.user.role === 'super_admin' ? req.body.group_id : req.user.group_id;
+  const group_id = req.body.group_id || req.user.group_id;
     
     // Verificar límite del plan
     if (role === 'musician') {

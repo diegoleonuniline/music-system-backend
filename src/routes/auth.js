@@ -50,7 +50,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Registro (solo Super Admin puede crear usuarios)
+// Registro (solo Super Admin)
 router.post('/register', async (req, res) => {
   try {
     const { email, password, first_name, last_name, phone, role, group_id } = req.body;
@@ -72,7 +72,6 @@ router.post('/register', async (req, res) => {
   }
 });
 
-module.exports = router;
 // Registro de grupo + admin (público)
 router.post('/register-group', async (req, res) => {
   const connection = await db.getConnection();
@@ -81,35 +80,37 @@ router.post('/register-group', async (req, res) => {
     
     const { group_name, first_name, last_name, email, phone, password, plan } = req.body;
     
-    // Verificar email
     const [existing] = await connection.query('SELECT id FROM users WHERE email = ?', [email]);
     if (existing.length > 0) {
       await connection.rollback();
       return res.status(400).json({ error: 'El email ya está registrado' });
     }
     
-    // Crear grupo
-    const trialEnd = new Date();
-    trialEnd.setDate(trialEnd.getDate() + 7);
+    const planMap = { 'basico': 1, 'profesional': 2, 'empresarial': 3 };
+    const planId = planMap[plan] || 2;
+    
+    const startDate = new Date().toISOString().split('T')[0];
+    const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     
     const [groupResult] = await connection.query(
-      `INSERT INTO groups (name, plan, trial_ends_at) VALUES (?, ?, ?)`,
-      [group_name, plan || 'profesional', trialEnd]
+      `INSERT INTO music_groups (name, plan_id, plan_start_date, plan_end_date, is_active) VALUES (?, ?, ?, ?, 1)`,
+      [group_name, planId, startDate, endDate]
     );
     const groupId = groupResult.insertId;
     
-    // Crear admin
     const hashedPassword = await bcrypt.hash(password, 10);
     const [userResult] = await connection.query(
-      `INSERT INTO users (email, password, first_name, last_name, phone, role, group_id) 
-       VALUES (?, ?, ?, ?, ?, 'admin', ?)`,
-      [email, hashedPassword, first_name, last_name, phone, groupId]
+      `INSERT INTO users (email, password, first_name, last_name, phone, role, group_id, is_active) 
+       VALUES (?, ?, ?, ?, ?, 'group_admin', ?, 1)`,
+      [email, hashedPassword, first_name, last_name, phone || null, groupId]
     );
+    
+    await connection.query('UPDATE music_groups SET admin_user_id = ? WHERE id = ?', [userResult.insertId, groupId]);
     
     await connection.commit();
     
     const token = jwt.sign(
-      { id: userResult.insertId, email, role: 'admin', group_id: groupId },
+      { id: userResult.insertId, email, role: 'group_admin', group_id: groupId },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -121,7 +122,7 @@ router.post('/register-group', async (req, res) => {
         email,
         first_name,
         last_name,
-        role: 'admin',
+        role: 'group_admin',
         group_id: groupId
       }
     });
@@ -132,3 +133,5 @@ router.post('/register-group', async (req, res) => {
     connection.release();
   }
 });
+
+module.exports = router; // <-- AL FINAL

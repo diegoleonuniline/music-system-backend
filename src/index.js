@@ -22,19 +22,19 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json());
 
-// Rutas
-app.use('/api/auth', require('./src/routes/auth'));
-app.use('/api/plans', require('./src/routes/plans'));
-app.use('/api/groups', require('./src/routes/groups'));
-app.use('/api/users', require('./src/routes/users'));
-app.use('/api/categories', require('./src/routes/categories'));
-app.use('/api/genres', require('./src/routes/genres'));
-app.use('/api/songs', require('./src/routes/songs'));
-app.use('/api/setlists', require('./src/routes/setlists'));
-app.use('/api/events', require('./src/routes/events'));
-app.use('/api/rehearsals', require('./src/routes/rehearsals'));
-app.use('/api/song-resources', require('./src/routes/song-resources'));
-app.use('/api/notifications', require('./src/routes/notifications'));
+// Rutas (relativas a src/)
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/plans', require('./routes/plans'));
+app.use('/api/groups', require('./routes/groups'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/categories', require('./routes/categories'));
+app.use('/api/genres', require('./routes/genres'));
+app.use('/api/songs', require('./routes/songs'));
+app.use('/api/setlists', require('./routes/setlists'));
+app.use('/api/events', require('./routes/events'));
+app.use('/api/rehearsals', require('./routes/rehearsals'));
+app.use('/api/song-resources', require('./routes/song-resources'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 // Ruta de prueba
 app.get('/', (req, res) => {

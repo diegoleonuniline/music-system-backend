@@ -1,73 +1,83 @@
- const express = require('express');
-
+const express = require('express');
 const cors = require('cors');
-
 require('dotenv').config();
-
-const authRoutes = require('./routes/auth');
-
-const groupsRoutes = require('./routes/groups');
-
-const songsRoutes = require('./routes/songs');
-
-const setlistsRoutes = require('./routes/setlists');
-
-const eventsRoutes = require('./routes/events');
-
-const rehearsalsRoutes = require('./routes/rehearsals');
-
-const usersRoutes = require('./routes/users');
-
-const plansRoutes = require('./routes/plans');
-
-const categoriesRoutes = require('./routes/categories');
-
-const genresRoutes = require('./routes/genres');
 
 const app = express();
 
-app.use(cors());
+// CORS configurado para todos los dominios
+app.use(cors({
+    origin: [
+        'https://www.caimanapp.com',
+        'https://caimanapp.com',
+        'https://diegoleon10.github.io',
+        'http://localhost:3000',
+        'http://localhost:5500',
+        'http://127.0.0.1:5500'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+}));
 
+// Preflight requests
+app.options('*', cors());
+
+// Parse JSON
 app.use(express.json());
 
 // Rutas
-
-// Rutas
-
 app.use('/api/auth', require('./routes/auth'));
-
 app.use('/api/plans', require('./routes/plans'));
-
 app.use('/api/groups', require('./routes/groups'));
-
 app.use('/api/users', require('./routes/users'));
-
 app.use('/api/categories', require('./routes/categories'));
-
 app.use('/api/genres', require('./routes/genres'));
-
 app.use('/api/songs', require('./routes/songs'));
-
 app.use('/api/setlists', require('./routes/setlists'));
-
 app.use('/api/events', require('./routes/events'));
-
 app.use('/api/rehearsals', require('./routes/rehearsals'));
-
 app.use('/api/song-resources', require('./routes/song-resources'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 // Ruta de prueba
-
 app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Music System API funcionando',
+        version: '1.0.0',
+        endpoints: [
+            '/api/auth',
+            '/api/plans',
+            '/api/groups',
+            '/api/users',
+            '/api/categories',
+            '/api/genres',
+            '/api/songs',
+            '/api/setlists',
+            '/api/events',
+            '/api/rehearsals',
+            '/api/song-resources',
+            '/api/notifications'
+        ]
+    });
+});
 
-  res.json({ message: 'Music System API funcionando' });
+// Health check
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
+// Error handler
+app.use((err, req, res, next) => {
+    console.error('Error:', err.message);
+    res.status(500).json({ error: 'Error interno del servidor' });
+});
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ error: 'Ruta no encontrada' });
 });
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-
-  console.logServidor corriendo en puerto ${PORT});
-
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });

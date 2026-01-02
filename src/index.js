@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const app = express();
 
-// CORS configurado para todos los dominios
+// CORS
 app.use(cors({
     origin: [
         'https://www.caimanapp.com',
@@ -19,10 +19,7 @@ app.use(cors({
     credentials: true
 }));
 
-// Preflight requests
 app.options('*', cors());
-
-// Parse JSON
 app.use(express.json());
 
 // Rutas
@@ -41,29 +38,24 @@ app.use('/api/notifications', require('./src/routes/notifications'));
 
 // Ruta de prueba
 app.get('/', (req, res) => {
-    res.json({ 
-        message: 'Music System API funcionando',
-        version: '1.0.0'
-    });
+    res.json({ message: 'Music System API funcionando', version: '1.0.0' });
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Error handler
+// Error handlers
 app.use((err, req, res, next) => {
     console.error('Error:', err.message);
     res.status(500).json({ error: 'Error interno del servidor' });
 });
 
-// 404 handler
 app.use((req, res) => {
     res.status(404).json({ error: 'Ruta no encontrada' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en puerto ${PORT}`);
+    console.log('Servidor corriendo en puerto ' + PORT);
 });

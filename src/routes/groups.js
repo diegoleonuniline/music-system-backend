@@ -1,20 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/database');
-const { verifyToken, isSuperAdmin, isGroupAdmin } = require('../middleware/auth');
+const { verifyToken, isSuperAdmin } = require('../middleware/auth');
 
-// GET - Obtener mi grupo (para cualquier usuario autenticado)
+// GET - Obtener mi grupo
 router.get('/my-group', verifyToken, async (req, res) => {
     try {
         const [rows] = await pool.query(`
-            SELECT 
-                g.*,
-                p.name as plan_name,
-                p.max_musicians,
-                p.price,
-                admin.first_name as admin_first_name,
-                admin.last_name as admin_last_name,
-                admin.email as admin_email,
+            SELECT g.*, p.name as plan_name, p.max_musicians, p.price,
+                admin.first_name as admin_first_name, admin.last_name as admin_last_name, admin.email as admin_email,
                 (SELECT COUNT(*) FROM users WHERE group_id = g.id AND role = 'musician' AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
@@ -25,7 +19,6 @@ router.get('/my-group', verifyToken, async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Grupo no encontrado' });
         }
-
         res.json(rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -36,13 +29,8 @@ router.get('/my-group', verifyToken, async (req, res) => {
 router.get('/', verifyToken, isSuperAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query(`
-            SELECT 
-                g.*,
-                p.name as plan_name,
-                p.max_musicians,
-                admin.first_name as admin_first_name,
-                admin.last_name as admin_last_name,
-                admin.email as admin_email,
+            SELECT g.*, p.name as plan_name, p.max_musicians,
+                admin.first_name as admin_first_name, admin.last_name as admin_last_name, admin.email as admin_email,
                 (SELECT COUNT(*) FROM users WHERE group_id = g.id AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
@@ -55,17 +43,12 @@ router.get('/', verifyToken, isSuperAdmin, async (req, res) => {
     }
 });
 
-// GET - Obtener un grupo (Solo Super Admin)
+// GET - Obtener un grupo
 router.get('/:id', verifyToken, isSuperAdmin, async (req, res) => {
     try {
         const [rows] = await pool.query(`
-            SELECT 
-                g.*,
-                p.name as plan_name,
-                p.max_musicians,
-                admin.first_name as admin_first_name,
-                admin.last_name as admin_last_name,
-                admin.email as admin_email,
+            SELECT g.*, p.name as plan_name, p.max_musicians,
+                admin.first_name as admin_first_name, admin.last_name as admin_last_name, admin.email as admin_email,
                 (SELECT COUNT(*) FROM users WHERE group_id = g.id AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
@@ -76,14 +59,13 @@ router.get('/:id', verifyToken, isSuperAdmin, async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Grupo no encontrado' });
         }
-
         res.json(rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// POST - Crear grupo (Solo Super Admin)
+// POST - Crear grupo
 router.post('/', verifyToken, isSuperAdmin, async (req, res) => {
     try {
         const { name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id } = req.body;
@@ -93,50 +75,31 @@ router.post('/', verifyToken, isSuperAdmin, async (req, res) => {
         }
 
         const [result] = await pool.query(
-            `INSERT INTO music_groups (name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active) 
-             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+            'INSERT INTO music_groups (name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)',
             [name, plan_id || null, plan_start_date || null, plan_end_date || null, logo_url || null, admin_user_id || null]
         );
 
-        // Si se asignó admin, actualizar su rol y grupo
         if (admin_user_id) {
-            await pool.query(
-                'UPDATE users SET role = ?, group_id = ? WHERE id = ?',
-                ['group_admin', result.insertId, admin_user_id]
-            );
+            await pool.query('UPDATE users SET role = ?, group_id = ? WHERE id = ?', ['group_admin', result.insertId, admin_user_id]);
         }
 
-        res.status(201).json({ 
-            id: result.insertId, 
-            name,
-            plan_id,
-            plan_start_date,
-            plan_end_date,
-            logo_url,
-            admin_user_id,
-            is_active: 1
-        });
+        res.status(201).json({ id: result.insertId, name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active: 1 });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// PUT - Actualizar grupo (Solo Super Admin)
+// PUT - Actualizar grupo
 router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
     try {
         const { name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active } = req.body;
         
-        const [existing] = await pool.query(
-            'SELECT * FROM music_groups WHERE id = ?',
-            [req.params.id]
-        );
-        
+        const [existing] = await pool.query('SELECT * FROM music_groups WHERE id = ?', [req.params.id]);
         if (existing.length === 0) {
             return res.status(404).json({ error: 'Grupo no encontrado' });
         }
 
         const oldAdminId = existing[0].admin_user_id;
-
         const updates = [];
         const values = [];
 
@@ -150,27 +113,15 @@ router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
 
         if (updates.length > 0) {
             values.push(req.params.id);
-            await pool.query(
-                `UPDATE music_groups SET ${updates.join(', ')} WHERE id = ?`,
-                values
-            );
+            await pool.query('UPDATE music_groups SET ' + updates.join(', ') + ' WHERE id = ?', values);
         }
 
-        // Actualizar roles si cambió el admin
         if (admin_user_id !== undefined && admin_user_id !== oldAdminId) {
-            // Quitar rol de admin al anterior
             if (oldAdminId) {
-                await pool.query(
-                    'UPDATE users SET role = ? WHERE id = ?',
-                    ['musician', oldAdminId]
-                );
+                await pool.query('UPDATE users SET role = ? WHERE id = ?', ['musician', oldAdminId]);
             }
-            // Dar rol de admin al nuevo
             if (admin_user_id) {
-                await pool.query(
-                    'UPDATE users SET role = ?, group_id = ? WHERE id = ?',
-                    ['group_admin', req.params.id, admin_user_id]
-                );
+                await pool.query('UPDATE users SET role = ?, group_id = ? WHERE id = ?', ['group_admin', req.params.id, admin_user_id]);
             }
         }
 
@@ -180,30 +131,20 @@ router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
     }
 });
 
-// DELETE - Eliminar grupo (Solo Super Admin)
+// DELETE - Eliminar grupo
 router.delete('/:id', verifyToken, isSuperAdmin, async (req, res) => {
     try {
-        const [existing] = await pool.query(
-            'SELECT * FROM music_groups WHERE id = ?',
-            [req.params.id]
-        );
-        
+        const [existing] = await pool.query('SELECT * FROM music_groups WHERE id = ?', [req.params.id]);
         if (existing.length === 0) {
             return res.status(404).json({ error: 'Grupo no encontrado' });
         }
 
-        // Verificar si hay usuarios en el grupo
-        const [users] = await pool.query(
-            'SELECT COUNT(*) as count FROM users WHERE group_id = ?',
-            [req.params.id]
-        );
-
+        const [users] = await pool.query('SELECT COUNT(*) as count FROM users WHERE group_id = ?', [req.params.id]);
         if (users[0].count > 0) {
             return res.status(400).json({ error: 'No se puede eliminar el grupo porque tiene usuarios asignados' });
         }
 
         await pool.query('DELETE FROM music_groups WHERE id = ?', [req.params.id]);
-
         res.json({ message: 'Grupo eliminado' });
     } catch (error) {
         res.status(500).json({ error: error.message });

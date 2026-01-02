@@ -7,13 +7,10 @@ const { verifyToken } = require('../middleware/auth');
 router.get('/song/:songId', verifyToken, async (req, res) => {
     try {
         const { songId } = req.params;
-        const { filter } = req.query; // 'all', 'mine', 'shared'
+        const { filter } = req.query;
         
         let query = `
-            SELECT 
-                sr.*,
-                u.first_name as user_name,
-                u.last_name as user_last_name
+            SELECT sr.*, u.first_name as user_name, u.last_name as user_last_name
             FROM song_resources sr
             LEFT JOIN users u ON sr.user_id = u.id
             WHERE sr.song_id = ?
@@ -27,7 +24,6 @@ router.get('/song/:songId', verifyToken, async (req, res) => {
         } else if (filter === 'shared') {
             query += ' AND sr.is_shared = 1';
         } else {
-            // 'all' - mostrar compartidos + míos
             query += ' AND (sr.is_shared = 1 OR sr.user_id = ?)';
             params.push(req.user.id);
         }
@@ -45,9 +41,7 @@ router.get('/song/:songId', verifyToken, async (req, res) => {
 router.get('/:id', verifyToken, async (req, res) => {
     try {
         const [rows] = await pool.query(`
-            SELECT 
-                sr.*,
-                u.first_name as user_name
+            SELECT sr.*, u.first_name as user_name
             FROM song_resources sr
             LEFT JOIN users u ON sr.user_id = u.id
             WHERE sr.id = ? AND (sr.is_shared = 1 OR sr.user_id = ?)
@@ -56,7 +50,6 @@ router.get('/:id', verifyToken, async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ error: 'Recurso no encontrado' });
         }
-        
         res.json(rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -75,16 +68,7 @@ router.post('/', verifyToken, async (req, res) => {
         const [result] = await pool.query(
             `INSERT INTO song_resources (song_id, user_id, type, title, content, file_url, file_type, is_shared) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                song_id,
-                req.user.id,
-                type || 'notes',
-                title || null,
-                content || null,
-                file_url || null,
-                file_type || null,
-                is_shared !== undefined ? is_shared : 1
-            ]
+            [song_id, req.user.id, type || 'notes', title || null, content || null, file_url || null, file_type || null, is_shared !== undefined ? is_shared : 1]
         );
         
         res.status(201).json({
@@ -92,10 +76,7 @@ router.post('/', verifyToken, async (req, res) => {
             song_id,
             user_id: req.user.id,
             type: type || 'notes',
-            title,
-            content,
-            file_url,
-            file_type,
+            title, content, file_url, file_type,
             is_shared: is_shared !== undefined ? is_shared : 1
         });
     } catch (error) {
@@ -103,7 +84,7 @@ router.post('/', verifyToken, async (req, res) => {
     }
 });
 
-// PUT - Actualizar recurso (solo el dueño)
+// PUT - Actualizar recurso
 router.put('/:id', verifyToken, async (req, res) => {
     try {
         const [existing] = await pool.query(
@@ -116,7 +97,6 @@ router.put('/:id', verifyToken, async (req, res) => {
         }
         
         const { type, title, content, file_url, file_type, is_shared } = req.body;
-        
         const updates = [];
         const values = [];
         
@@ -129,10 +109,7 @@ router.put('/:id', verifyToken, async (req, res) => {
         
         if (updates.length > 0) {
             values.push(req.params.id);
-            await pool.query(
-                `UPDATE song_resources SET ${updates.join(', ')} WHERE id = ?`,
-                values
-            );
+            await pool.query(`UPDATE song_resources SET ${updates.join(', ')} WHERE id = ?`, values);
         }
         
         res.json({ id: parseInt(req.params.id), ...req.body });
@@ -141,7 +118,7 @@ router.put('/:id', verifyToken, async (req, res) => {
     }
 });
 
-// DELETE - Eliminar recurso (solo el dueño)
+// DELETE - Eliminar recurso
 router.delete('/:id', verifyToken, async (req, res) => {
     try {
         const [existing] = await pool.query(
@@ -154,7 +131,6 @@ router.delete('/:id', verifyToken, async (req, res) => {
         }
         
         await pool.query('DELETE FROM song_resources WHERE id = ?', [req.params.id]);
-        
         res.json({ message: 'Recurso eliminado' });
     } catch (error) {
         res.status(500).json({ error: error.message });

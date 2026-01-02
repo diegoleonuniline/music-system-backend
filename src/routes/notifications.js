@@ -6,7 +6,6 @@ const { verifyToken, isGroupAdmin } = require('../middleware/auth');
 const ONESIGNAL_APP_ID = '9c406d11-293e-4344-bbbc-5f7ae8c997be';
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || '';
 
-// Función helper para enviar notificación
 function sendPushNotification({ title, message, userIds, segments, data }) {
     return new Promise((resolve, reject) => {
         const payload = {
@@ -31,7 +30,7 @@ function sendPushNotification({ title, message, userIds, segments, data }) {
             path: '/api/v1/notifications',
             method: 'POST',
             headers: {
-                'Authorization': `Basic ${ONESIGNAL_API_KEY}`,
+                'Authorization': 'Basic ' + ONESIGNAL_API_KEY,
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(postData)
             }
@@ -41,11 +40,8 @@ function sendPushNotification({ title, message, userIds, segments, data }) {
             let data = '';
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
-                try {
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    resolve({ raw: data });
-                }
+                try { resolve(JSON.parse(data)); } 
+                catch (e) { resolve({ raw: data }); }
             });
         });
 
@@ -55,7 +51,6 @@ function sendPushNotification({ title, message, userIds, segments, data }) {
     });
 }
 
-// POST /api/notifications/test
 router.post('/test', verifyToken, async (req, res) => {
     try {
         const result = await sendPushNotification({
@@ -69,31 +64,25 @@ router.post('/test', verifyToken, async (req, res) => {
     }
 });
 
-// POST /api/notifications/send
 router.post('/send', verifyToken, isGroupAdmin, async (req, res) => {
     try {
         const { title, message, user_ids } = req.body;
         if (!title || !message) {
             return res.status(400).json({ error: 'title y message son requeridos' });
         }
-        const result = await sendPushNotification({
-            title,
-            message,
-            userIds: user_ids || null
-        });
+        const result = await sendPushNotification({ title, message, userIds: user_ids || null });
         res.json({ success: true, result });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// POST /api/notifications/event
 router.post('/event', verifyToken, isGroupAdmin, async (req, res) => {
     try {
         const { event_name, event_date, group_id } = req.body;
         const result = await sendPushNotification({
             title: '📅 Nuevo Evento',
-            message: `${event_name} - ${event_date}`,
+            message: event_name + ' - ' + event_date,
             data: { type: 'event', group_id }
         });
         res.json({ success: true, result });
@@ -102,13 +91,12 @@ router.post('/event', verifyToken, isGroupAdmin, async (req, res) => {
     }
 });
 
-// POST /api/notifications/rehearsal
 router.post('/rehearsal', verifyToken, isGroupAdmin, async (req, res) => {
     try {
         const { song_name, target_date } = req.body;
         const result = await sendPushNotification({
             title: '🎸 Nueva canción para ensayar',
-            message: `${song_name}${target_date ? ' - Meta: ' + target_date : ''}`,
+            message: song_name + (target_date ? ' - Meta: ' + target_date : ''),
             data: { type: 'rehearsal' }
         });
         res.json({ success: true, result });
@@ -117,7 +105,6 @@ router.post('/rehearsal', verifyToken, isGroupAdmin, async (req, res) => {
     }
 });
 
-// POST /api/notifications/resource
 router.post('/resource', verifyToken, async (req, res) => {
     try {
         const { song_name, resource_type, user_name } = req.body;
@@ -127,7 +114,7 @@ router.post('/resource', verifyToken, async (req, res) => {
         };
         const result = await sendPushNotification({
             title: '📎 Nuevo recurso compartido',
-            message: `${user_name} agregó ${typeNames[resource_type] || 'recurso'} a "${song_name}"`,
+            message: user_name + ' agregó ' + (typeNames[resource_type] || 'recurso') + ' a "' + song_name + '"',
             data: { type: 'resource' }
         });
         res.json({ success: true, result });

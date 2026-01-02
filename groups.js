@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/database');
-const { verifyToken, isSuperAdmin, isGroupAdmin } = require('../middleware/auth');
+const pool = require('./src/config/database');
+const { verifyToken, isSuperAdmin, isGroupAdmin } = require('./src/middleware/auth');
 
 // GET - Obtener mi grupo (para cualquier usuario autenticado)
 router.get('/my-group', verifyToken, async (req, res) => {
@@ -12,9 +12,13 @@ router.get('/my-group', verifyToken, async (req, res) => {
                 p.name as plan_name,
                 p.max_musicians,
                 p.price,
+                admin.first_name as admin_first_name,
+                admin.last_name as admin_last_name,
+                admin.email as admin_email,
                 (SELECT COUNT(*) FROM users WHERE group_id = g.id AND role = 'musician' AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
+            LEFT JOIN users admin ON g.admin_user_id = admin.id
             WHERE g.id = ?
         `, [req.user.group_id]);
 
@@ -36,9 +40,13 @@ router.get('/', verifyToken, isSuperAdmin, async (req, res) => {
                 g.*,
                 p.name as plan_name,
                 p.max_musicians,
-                (SELECT COUNT(*) FROM users WHERE group_id = g.id AND role = 'musician' AND is_active = 1) as current_musicians
+                admin.first_name as admin_first_name,
+                admin.last_name as admin_last_name,
+                admin.email as admin_email,
+                (SELECT COUNT(*) FROM users WHERE group_id = g.id AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
+            LEFT JOIN users admin ON g.admin_user_id = admin.id
             ORDER BY g.name
         `);
         res.json(rows);
@@ -55,9 +63,13 @@ router.get('/:id', verifyToken, isSuperAdmin, async (req, res) => {
                 g.*,
                 p.name as plan_name,
                 p.max_musicians,
-                (SELECT COUNT(*) FROM users WHERE group_id = g.id AND role = 'musician' AND is_active = 1) as current_musicians
+                admin.first_name as admin_first_name,
+                admin.last_name as admin_last_name,
+                admin.email as admin_email,
+                (SELECT COUNT(*) FROM users WHERE group_id = g.id AND is_active = 1) as current_musicians
             FROM music_groups g
             LEFT JOIN plans p ON g.plan_id = p.id
+            LEFT JOIN users admin ON g.admin_user_id = admin.id
             WHERE g.id = ?
         `, [req.params.id]);
 
@@ -74,17 +86,25 @@ router.get('/:id', verifyToken, isSuperAdmin, async (req, res) => {
 // POST - Crear grupo (Solo Super Admin)
 router.post('/', verifyToken, isSuperAdmin, async (req, res) => {
     try {
-        const { name, plan_id, plan_start_date, plan_end_date, logo_url } = req.body;
+        const { name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id } = req.body;
         
         if (!name) {
             return res.status(400).json({ error: 'El nombre es requerido' });
         }
 
         const [result] = await pool.query(
-            `INSERT INTO music_groups (name, plan_id, plan_start_date, plan_end_date, logo_url, is_active) 
-             VALUES (?, ?, ?, ?, ?, 1)`,
-            [name, plan_id || null, plan_start_date || null, plan_end_date || null, logo_url || null]
+            `INSERT INTO music_groups (name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active) 
+             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+            [name, plan_id || null, plan_start_date || null, plan_end_date || null, logo_url || null, admin_user_id || null]
         );
+
+        // Si se asignó admin, actualizar su rol y grupo
+        if (admin_user_id) {
+            await pool.query(
+                'UPDATE users SET role = ?, group_id = ? WHERE id = ?',
+                ['group_admin', result.insertId, admin_user_id]
+            );
+        }
 
         res.status(201).json({ 
             id: result.insertId, 
@@ -93,6 +113,7 @@ router.post('/', verifyToken, isSuperAdmin, async (req, res) => {
             plan_start_date,
             plan_end_date,
             logo_url,
+            admin_user_id,
             is_active: 1
         });
     } catch (error) {
@@ -103,7 +124,7 @@ router.post('/', verifyToken, isSuperAdmin, async (req, res) => {
 // PUT - Actualizar grupo (Solo Super Admin)
 router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
     try {
-        const { name, plan_id, plan_start_date, plan_end_date, logo_url, is_active } = req.body;
+        const { name, plan_id, plan_start_date, plan_end_date, logo_url, admin_user_id, is_active } = req.body;
         
         const [existing] = await pool.query(
             'SELECT * FROM music_groups WHERE id = ?',
@@ -114,6 +135,8 @@ router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
             return res.status(404).json({ error: 'Grupo no encontrado' });
         }
 
+        const oldAdminId = existing[0].admin_user_id;
+
         const updates = [];
         const values = [];
 
@@ -122,6 +145,7 @@ router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
         if (plan_start_date !== undefined) { updates.push('plan_start_date = ?'); values.push(plan_start_date || null); }
         if (plan_end_date !== undefined) { updates.push('plan_end_date = ?'); values.push(plan_end_date || null); }
         if (logo_url !== undefined) { updates.push('logo_url = ?'); values.push(logo_url || null); }
+        if (admin_user_id !== undefined) { updates.push('admin_user_id = ?'); values.push(admin_user_id || null); }
         if (is_active !== undefined) { updates.push('is_active = ?'); values.push(is_active); }
 
         if (updates.length > 0) {
@@ -130,6 +154,24 @@ router.put('/:id', verifyToken, isSuperAdmin, async (req, res) => {
                 `UPDATE music_groups SET ${updates.join(', ')} WHERE id = ?`,
                 values
             );
+        }
+
+        // Actualizar roles si cambió el admin
+        if (admin_user_id !== undefined && admin_user_id !== oldAdminId) {
+            // Quitar rol de admin al anterior
+            if (oldAdminId) {
+                await pool.query(
+                    'UPDATE users SET role = ? WHERE id = ?',
+                    ['musician', oldAdminId]
+                );
+            }
+            // Dar rol de admin al nuevo
+            if (admin_user_id) {
+                await pool.query(
+                    'UPDATE users SET role = ?, group_id = ? WHERE id = ?',
+                    ['group_admin', req.params.id, admin_user_id]
+                );
+            }
         }
 
         res.json({ id: parseInt(req.params.id), ...req.body });

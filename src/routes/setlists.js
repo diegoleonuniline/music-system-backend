@@ -109,17 +109,24 @@ router.post('/:id/songs', verifyToken, isGroupAdmin, async (req, res) => {
 // Reordenar canciones del setlist
 router.put('/:id/reorder', verifyToken, isGroupAdmin, async (req, res) => {
   try {
-    const { songs } = req.body; // Array de { id: setlist_song_id, position: nueva_posicion }
+    const { songs } = req.body;
+    
+    if (!songs || !Array.isArray(songs) || songs.length === 0) {
+      return res.status(400).json({ error: 'Se requiere array de canciones' });
+    }
     
     for (const song of songs) {
-      await db.query(
-        'UPDATE setlist_songs SET position = ? WHERE id = ? AND setlist_id = ?',
-        [song.position, song.id, req.params.id]
-      );
+      if (song.id && song.position !== undefined) {
+        await db.query(
+          'UPDATE setlist_songs SET position = ? WHERE id = ? AND setlist_id = ?',
+          [song.position, song.id, req.params.id]
+        );
+      }
     }
     
     res.json({ message: 'Orden actualizado' });
   } catch (error) {
+    console.error('Reorder error:', error);
     res.status(500).json({ error: error.message });
   }
 });

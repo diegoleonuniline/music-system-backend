@@ -36,9 +36,9 @@ app.use('/api/events', require('./routes/events'));
 app.use('/api/rehearsals', require('./routes/rehearsals'));
 app.use('/api/song-resources', require('./routes/song-resources'));
 app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/artists', require('./routes/artists'));
-app.use('/api/projects', require('./routes/projects'));
-app.use('/api/song-settings', require('./routes/song-settings'));
+//app.use('/api/artists', require('./routes/artists'));
+//app.use('/api/projects', require('./routes/projects'));
+//app.use('/api/song-settings', require('./routes/song-settings'));
 
 // Ruta de prueba
 app.get('/', (req, res) => {

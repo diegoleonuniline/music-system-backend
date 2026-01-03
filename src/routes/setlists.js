@@ -115,6 +115,17 @@ router.put('/:id/reorder', verifyToken, isGroupAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Se requiere array de canciones' });
     }
     
+    // Paso 1: Poner posiciones temporales (negativas) para evitar duplicados
+    for (let i = 0; i < songs.length; i++) {
+      if (songs[i].id) {
+        await db.query(
+          'UPDATE setlist_songs SET position = ? WHERE id = ? AND setlist_id = ?',
+          [-(i + 1), songs[i].id, req.params.id]
+        );
+      }
+    }
+    
+    // Paso 2: Poner posiciones finales
     for (const song of songs) {
       if (song.id && song.position !== undefined) {
         await db.query(

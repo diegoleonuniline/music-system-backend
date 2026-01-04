@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const auth = require('../middleware/auth');
+const { verifyToken } = require('../middleware/auth');
 
-router.get('/', auth, async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
     try {
         const [artists] = await db.query('SELECT * FROM artists WHERE group_id = ? ORDER BY name', [req.user.group_id]);
         res.json(artists);
@@ -12,7 +12,7 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
-router.post('/', auth, async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
     try {
         const { name, image_url } = req.body;
         const [result] = await db.query('INSERT INTO artists (group_id, name, image_url) VALUES (?, ?, ?)', [req.user.group_id, name, image_url]);
@@ -23,7 +23,7 @@ router.post('/', auth, async (req, res) => {
     }
 });
 
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
     try {
         const { name, image_url } = req.body;
         await db.query('UPDATE artists SET name = ?, image_url = ? WHERE id = ? AND group_id = ?', [name, image_url, req.params.id, req.user.group_id]);
@@ -33,7 +33,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 });
 
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', verifyToken, async (req, res) => {
     try {
         await db.query('DELETE FROM artists WHERE id = ? AND group_id = ?', [req.params.id, req.user.group_id]);
         res.json({ success: true });

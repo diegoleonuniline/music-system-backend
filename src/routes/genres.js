@@ -45,9 +45,9 @@ router.put('/:id', verifyToken, isGroupAdmin, async (req, res) => {
   }
 });
 
-// Eliminar género
 router.delete('/:id', verifyToken, isGroupAdmin, async (req, res) => {
   try {
+    await db.query('UPDATE songs SET genre_id = NULL WHERE genre_id = ? AND group_id = ?', [req.params.id, req.user.group_id]);
     await db.query('DELETE FROM genres WHERE id = ? AND group_id = ?', [req.params.id, req.user.group_id]);
     res.json({ message: 'Género eliminado' });
   } catch (error) {

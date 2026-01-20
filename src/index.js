@@ -38,10 +38,24 @@ app.use('/api/artists', require('./routes/artists'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/song-settings', require('./routes/song-settings'));
 
+// Función para normalizar texto (quitar acentos)
+function normalizeText(str) {
+    return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// Función para crear slug
+function createSlug(str) {
+    return normalizeText(str)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .trim();
+}
+
 // Endpoint para buscar letras
 app.get('/api/lyrics/search', async (req, res) => {
     const { artist, song } = req.query;
-    const MUSIXMATCH_KEY = '445d6196c08dc2b7490929f18149d684';
     const GENIUS_TOKEN = 'z0TdnaAK55-EqV5J8XKTVJieM0CcqGRWg_2tepJn_0dV5px2GWYt7LiByTL3rj_w';
     
     console.log('========== LYRICS SEARCH ==========');
@@ -51,39 +65,85 @@ app.get('/api/lyrics/search', async (req, res) => {
         return res.status(400).json({ error: 'Faltan parámetros artist y song' });
     }
     
-    const artistNorm = artist.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const songNorm = song.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const artistNorm = normalizeText(artist);
+    const songNorm = normalizeText(song);
     console.log('Normalizado - Artist:', artistNorm, '| Song:', songNorm);
     
     try {
-        // ========== INTENTO 1: Musixmatch ==========
-        console.log('\n--- Intentando Musixmatch ---');
+        // ========== INTENTO 1: Letras.com (mejor para español) ==========
+        console.log('\n--- Intentando Letras.com ---');
         try {
-            const mxUrl = `https://api.musixmatch.com/ws/1.1/matcher.lyrics.get?q_track=${encodeURIComponent(songNorm)}&q_artist=${encodeURIComponent(artistNorm)}&apikey=${MUSIXMATCH_KEY}`;
-            console.log('URL:', mxUrl);
+            const artistSlug = createSlug(artist);
+            const songSlug = createSlug(song);
+            const letrasUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
+            console.log('URL:', letrasUrl);
             
-            const mxRes = await fetch(mxUrl);
-            const mxData = await mxRes.json();
-            
-            const statusCode = mxData.message?.header?.status_code;
-            console.log('Musixmatch status:', statusCode);
-            
-            if (statusCode === 200 && mxData.message?.body?.lyrics?.lyrics_body) {
-                let lyrics = mxData.message.body.lyrics.lyrics_body;
-                // Quitar mensaje comercial al final
-                lyrics = lyrics.replace(/\*{7}[\s\S]*$/, '').trim();
-                
-                if (lyrics.length > 100) {
-                    console.log('SUCCESS: Musixmatch, length:', lyrics.length);
-                    return res.json({ found: true, lyrics, source: 'musixmatch' });
+            const letrasRes = await fetch(letrasUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'es-ES,es;q=0.9'
                 }
-                console.log('Musixmatch: letra muy corta o truncada');
+            });
+            console.log('Letras.com status:', letrasRes.status);
+            
+            if (letrasRes.ok) {
+                const html = await letrasRes.text();
+                
+                // Buscar el contenedor de letra
+                const lyricMatch = html.match(/<div class="cnt-letra[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<div/i) ||
+                                   html.match(/<div class="cnt-letra[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+                
+                if (lyricMatch) {
+                    let lyrics = lyricMatch[1]
+                        .replace(/<br\s*\/?>/gi, '\n')
+                        .replace(/<p[^>]*>/gi, '\n')
+                        .replace(/<\/p>/gi, '\n')
+                        .replace(/<[^>]+>/g, '')
+                        .replace(/&nbsp;/g, ' ')
+                        .replace(/&amp;/g, '&')
+                        .replace(/&quot;/g, '"')
+                        .replace(/&#39;/g, "'")
+                        .replace(/\n{3,}/g, '\n\n')
+                        .trim();
+                    
+                    if (lyrics.length > 100) {
+                        console.log('SUCCESS: Letras.com, length:', lyrics.length);
+                        return res.json({ found: true, lyrics, source: 'letras.com' });
+                    }
+                }
+                console.log('Letras.com: no se encontró letra válida');
             }
         } catch (e) {
-            console.log('Musixmatch falló:', e.message);
+            console.log('Letras.com falló:', e.message);
         }
         
-        // ========== INTENTO 2: lyrics.ovh ==========
+        // ========== INTENTO 2: Vagalume (buena para latino) ==========
+        console.log('\n--- Intentando Vagalume ---');
+        try {
+            const vagaUrl = `https://api.vagalume.com.br/search.php?art=${encodeURIComponent(artistNorm)}&mus=${encodeURIComponent(songNorm)}`;
+            console.log('URL:', vagaUrl);
+            
+            const vagaRes = await fetch(vagaUrl);
+            console.log('Vagalume status:', vagaRes.status);
+            
+            if (vagaRes.ok) {
+                const vagaData = await vagaRes.json();
+                
+                if ((vagaData.type === 'exact' || vagaData.type === 'aprox') && vagaData.mus?.[0]?.text) {
+                    const lyrics = vagaData.mus[0].text.trim();
+                    if (lyrics.length > 100) {
+                        console.log('SUCCESS: Vagalume, length:', lyrics.length);
+                        return res.json({ found: true, lyrics, source: 'vagalume' });
+                    }
+                }
+                console.log('Vagalume: no encontró letra');
+            }
+        } catch (e) {
+            console.log('Vagalume falló:', e.message);
+        }
+        
+        // ========== INTENTO 3: lyrics.ovh ==========
         console.log('\n--- Intentando lyrics.ovh ---');
         try {
             const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(artistNorm)}/${encodeURIComponent(songNorm)}`;
@@ -106,35 +166,6 @@ app.get('/api/lyrics/search', async (req, res) => {
             }
         } catch (e) {
             console.log('lyrics.ovh falló:', e.message);
-        }
-        
-        // ========== INTENTO 3: Musixmatch búsqueda alternativa ==========
-        console.log('\n--- Intentando Musixmatch search ---');
-        try {
-            const searchUrl = `https://api.musixmatch.com/ws/1.1/track.search?q_track=${encodeURIComponent(songNorm)}&q_artist=${encodeURIComponent(artistNorm)}&page_size=1&s_track_rating=desc&apikey=${MUSIXMATCH_KEY}`;
-            const searchRes = await fetch(searchUrl);
-            const searchData = await searchRes.json();
-            
-            if (searchData.message?.body?.track_list?.length) {
-                const trackId = searchData.message.body.track_list[0].track.track_id;
-                console.log('Track ID encontrado:', trackId);
-                
-                const lyricsUrl = `https://api.musixmatch.com/ws/1.1/track.lyrics.get?track_id=${trackId}&apikey=${MUSIXMATCH_KEY}`;
-                const lyricsRes = await fetch(lyricsUrl);
-                const lyricsData = await lyricsRes.json();
-                
-                if (lyricsData.message?.body?.lyrics?.lyrics_body) {
-                    let lyrics = lyricsData.message.body.lyrics.lyrics_body;
-                    lyrics = lyrics.replace(/\*{7}[\s\S]*$/, '').trim();
-                    
-                    if (lyrics.length > 100) {
-                        console.log('SUCCESS: Musixmatch search, length:', lyrics.length);
-                        return res.json({ found: true, lyrics, source: 'musixmatch' });
-                    }
-                }
-            }
-        } catch (e) {
-            console.log('Musixmatch search falló:', e.message);
         }
         
         // ========== FALLBACK: Genius URL ==========

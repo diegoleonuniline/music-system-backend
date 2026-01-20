@@ -79,60 +79,38 @@ try {
     const artistSlug = createSlug(artistNorm);
     const songSlug = createSlug(songNorm);
     
-    // Intento directo primero (más confiable)
     const directUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
     console.log('Intentando URL directa:', directUrl);
     
     let songRes = await fetch(directUrl, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
+    console.log('Letras.com direct status:', songRes.status);
     
-    // Si falla, buscar pero validando artista
-    if (!songRes.ok || songRes.status === 404) {
-        console.log('URL directa falló, buscando...');
-        const searchUrl = `https://www.letras.com/${artistSlug}/`;
-        const artistPageRes = await fetch(searchUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-        
-        if (artistPageRes.ok) {
-            const artistHtml = await artistPageRes.text();
-            // Buscar la canción en la página del artista
-            const songRegex = new RegExp(`href="(/${artistSlug}/[^"]+)"[^>]*>[^<]*${songNorm.split(' ')[0]}`, 'i');
-            const match = artistHtml.match(songRegex);
-            
-            if (match) {
-                const songUrl = `https://www.letras.com${match[1]}`;
-                console.log('Canción encontrada en página del artista:', songUrl);
-                songRes = await fetch(songUrl, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-                });
-            }
-        }
-    }
-    
-    if (songRes && songRes.ok) {
+    if (songRes.ok) {
         const html = await songRes.text();
         
-        // Verificar que el artista en la página coincida
-        const pageArtistMatch = html.match(/<span class="artist"[^>]*>([^<]+)<\/span>/i) ||
-                                html.match(/<h2[^>]*class="[^"]*head-title[^"]*"[^>]*>([^<]+)<\/h2>/i);
+        // Validar título de la canción
+        const titleMatch = html.match(/<h1[^>]*class="[^"]*head-title[^"]*"[^>]*>([^<]+)<\/h1>/i) ||
+                           html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
         
-        if (pageArtistMatch) {
-            const pageArtist = normalizeText(pageArtistMatch[1]).toLowerCase();
-            if (!pageArtist.includes(artistSlug.replace(/-/g, ' ').substring(0, 5))) {
-                console.log('Artista no coincide:', pageArtist, 'vs', artistSlug);
-                throw new Error('Artista no coincide');
+        if (titleMatch) {
+            const pageTitle = normalizeText(titleMatch[1]).toLowerCase().trim();
+            const searchTitle = songNorm.toLowerCase();
+            console.log('Título en página:', pageTitle, '| Buscado:', searchTitle);
+            
+            // Verificar que al menos las primeras palabras coincidan
+            const pageWords = pageTitle.split(/\s+/).slice(0, 3).join(' ');
+            const searchWords = searchTitle.split(/\s+/).slice(0, 3).join(' ');
+            
+            if (!pageWords.includes(searchWords) && !searchWords.includes(pageWords)) {
+                console.log('Título no coincide, saltando...');
+                throw new Error('Título no coincide');
             }
         }
         
         const lyricMatch = html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>\s*<div/i) ||
-                           html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>/i) ||
-                           html.match(/<div[^>]*class="[^"]*lyric[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+                           html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>/i);
         
         if (lyricMatch) {
             let lyrics = lyricMatch[1]
@@ -153,11 +131,10 @@ try {
             }
         }
     }
-    console.log('Letras.com: no se encontró resultado válido');
+    console.log('Letras.com: no encontró resultado válido');
 } catch (e) {
     console.log('Letras.com falló:', e.message);
 }
-
         
         // ========== INTENTO 2: Vagalume (buena para latino) ==========
         console.log('\n--- Intentando Vagalume ---');

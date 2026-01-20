@@ -21,11 +21,6 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json());
 
-// Función para quitar acentos
-function normalizeText(str) {
-    return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
 // Rutas
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/plans', require('./routes/plans'));
@@ -46,211 +41,129 @@ app.use('/api/song-settings', require('./routes/song-settings'));
 // Endpoint para buscar letras
 app.get('/api/lyrics/search', async (req, res) => {
     const { artist, song } = req.query;
+    const MUSIXMATCH_KEY = '445d6196c08dc2b7490929f18149d684';
     const GENIUS_TOKEN = 'z0TdnaAK55-EqV5J8XKTVJieM0CcqGRWg_2tepJn_0dV5px2GWYt7LiByTL3rj_w';
     
     console.log('========== LYRICS SEARCH ==========');
-    console.log('Artist original:', artist);
-    console.log('Song original:', song);
+    console.log('Artist:', artist, '| Song:', song);
     
     if (!artist || !song) {
-        console.log('ERROR: Faltan parámetros');
         return res.status(400).json({ error: 'Faltan parámetros artist y song' });
     }
     
-    // Normalizar textos (quitar acentos)
-    const artistNorm = normalizeText(artist);
-    const songNorm = normalizeText(song);
-    console.log('Artist normalizado:', artistNorm);
-    console.log('Song normalizado:', songNorm);
+    const artistNorm = artist.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const songNorm = song.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    console.log('Normalizado - Artist:', artistNorm, '| Song:', songNorm);
     
     try {
-        // ========== INTENTO 1: lyrics.ovh ==========
+        // ========== INTENTO 1: Musixmatch ==========
+        console.log('\n--- Intentando Musixmatch ---');
+        try {
+            const mxUrl = `https://api.musixmatch.com/ws/1.1/matcher.lyrics.get?q_track=${encodeURIComponent(songNorm)}&q_artist=${encodeURIComponent(artistNorm)}&apikey=${MUSIXMATCH_KEY}`;
+            console.log('URL:', mxUrl);
+            
+            const mxRes = await fetch(mxUrl);
+            const mxData = await mxRes.json();
+            
+            const statusCode = mxData.message?.header?.status_code;
+            console.log('Musixmatch status:', statusCode);
+            
+            if (statusCode === 200 && mxData.message?.body?.lyrics?.lyrics_body) {
+                let lyrics = mxData.message.body.lyrics.lyrics_body;
+                // Quitar mensaje comercial al final
+                lyrics = lyrics.replace(/\*{7}[\s\S]*$/, '').trim();
+                
+                if (lyrics.length > 100) {
+                    console.log('SUCCESS: Musixmatch, length:', lyrics.length);
+                    return res.json({ found: true, lyrics, source: 'musixmatch' });
+                }
+                console.log('Musixmatch: letra muy corta o truncada');
+            }
+        } catch (e) {
+            console.log('Musixmatch falló:', e.message);
+        }
+        
+        // ========== INTENTO 2: lyrics.ovh ==========
         console.log('\n--- Intentando lyrics.ovh ---');
         try {
-            const lyricsOvhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(artistNorm)}/${encodeURIComponent(songNorm)}`;
-            console.log('URL:', lyricsOvhUrl);
+            const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(artistNorm)}/${encodeURIComponent(songNorm)}`;
+            console.log('URL:', ovhUrl);
             
-            const lyricsRes = await fetch(lyricsOvhUrl, { timeout: 8000 });
-            console.log('Status:', lyricsRes.status);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
             
-            if (lyricsRes.ok) {
-                const lyricsData = await lyricsRes.json();
-                if (lyricsData.lyrics && lyricsData.lyrics.length > 50) {
-                    console.log('SUCCESS: Letra encontrada en lyrics.ovh, length:', lyricsData.lyrics.length);
-                    return res.json({ 
-                        found: true, 
-                        lyrics: lyricsData.lyrics.trim(), 
-                        source: 'lyrics.ovh' 
-                    });
+            const ovhRes = await fetch(ovhUrl, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
+            console.log('lyrics.ovh status:', ovhRes.status);
+            
+            if (ovhRes.ok) {
+                const ovhData = await ovhRes.json();
+                if (ovhData.lyrics && ovhData.lyrics.length > 50) {
+                    console.log('SUCCESS: lyrics.ovh, length:', ovhData.lyrics.length);
+                    return res.json({ found: true, lyrics: ovhData.lyrics.trim(), source: 'lyrics.ovh' });
                 }
-                console.log('lyrics.ovh respondió pero sin letra válida');
             }
         } catch (e) {
             console.log('lyrics.ovh falló:', e.message);
         }
         
-        // ========== INTENTO 2: Genius API ==========
-        console.log('\n--- Intentando Genius API ---');
-        const searchUrl = `https://api.genius.com/search?q=${encodeURIComponent(artistNorm + ' ' + songNorm)}`;
-        console.log('Search URL:', searchUrl);
-        
-        const searchRes = await fetch(searchUrl, {
-            headers: { 'Authorization': 'Bearer ' + GENIUS_TOKEN }
-        });
-        console.log('Genius Search Status:', searchRes.status);
-        
-        const searchData = await searchRes.json();
-        
-        if (!searchData.response?.hits?.length) {
-            console.log('ERROR: No se encontraron resultados en Genius');
-            return res.json({ found: false, message: 'No encontrado en ninguna fuente' });
-        }
-        
-        const hit = searchData.response.hits[0].result;
-        console.log('Hit encontrado:', hit.title, '-', hit.primary_artist.name);
-        console.log('Genius URL:', hit.url);
-        
-        // ========== SCRAPING DE GENIUS ==========
-        console.log('\n--- Scraping página de Genius ---');
-        const pageRes = await fetch(hit.url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0'
-            }
-        });
-        console.log('Page Status:', pageRes.status);
-        
-        const html = await pageRes.text();
-        console.log('HTML Length:', html.length);
-        
-        let lyrics = '';
-        
-        // Método 1: data-lyrics-container
-        console.log('\n--- Método 1: data-lyrics-container ---');
-        const containerRegex = /<div[^>]*data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi;
-        const containers = [];
-        let match;
-        while ((match = containerRegex.exec(html)) !== null) {
-            containers.push(match[1]);
-        }
-        console.log('Containers encontrados:', containers.length);
-        
-        if (containers.length > 0) {
-            lyrics = containers.map(c => {
-                return c
-                    .replace(/<br\s*\/?>/gi, '\n')
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/&amp;/g, '&')
-                    .replace(/&quot;/g, '"')
-                    .replace(/&#x27;|&#39;/g, "'")
-                    .replace(/&nbsp;/g, ' ')
-                    .replace(/&#\d+;/g, '')
-                    .trim();
-            }).join('\n\n');
-            console.log('Lyrics extraídas (método 1), length:', lyrics.length);
-        }
-        
-        // Método 2: Lyrics__Container class
-        if (!lyrics || lyrics.length < 100) {
-            console.log('\n--- Método 2: Lyrics__Container class ---');
-            const classRegex = /<div[^>]*class="[^"]*Lyrics__Container[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
-            const classContainers = [];
-            while ((match = classRegex.exec(html)) !== null) {
-                classContainers.push(match[1]);
-            }
-            console.log('Class containers encontrados:', classContainers.length);
+        // ========== INTENTO 3: Musixmatch búsqueda alternativa ==========
+        console.log('\n--- Intentando Musixmatch search ---');
+        try {
+            const searchUrl = `https://api.musixmatch.com/ws/1.1/track.search?q_track=${encodeURIComponent(songNorm)}&q_artist=${encodeURIComponent(artistNorm)}&page_size=1&s_track_rating=desc&apikey=${MUSIXMATCH_KEY}`;
+            const searchRes = await fetch(searchUrl);
+            const searchData = await searchRes.json();
             
-            if (classContainers.length > 0) {
-                lyrics = classContainers.map(c => {
-                    return c
-                        .replace(/<br\s*\/?>/gi, '\n')
-                        .replace(/<[^>]+>/g, '')
-                        .replace(/&amp;/g, '&')
-                        .replace(/&quot;/g, '"')
-                        .replace(/&#x27;|&#39;/g, "'")
-                        .replace(/&nbsp;/g, ' ')
-                        .trim();
-                }).join('\n\n');
-                console.log('Lyrics extraídas (método 2), length:', lyrics.length);
-            }
-        }
-        
-        // Método 3: JSON embebido
-        if (!lyrics || lyrics.length < 100) {
-            console.log('\n--- Método 3: JSON embebido ---');
-            const jsonPatterns = [
-                /"lyrics":\s*\{[^}]*"body":\s*\{[^}]*"plain":\s*"([^"]+)"/,
-                /"lyrics":\s*\{[^}]*"plain":\s*"([^"]+)"/,
-                /"lyricsText":\s*"([^"]+)"/
-            ];
-            
-            for (let i = 0; i < jsonPatterns.length; i++) {
-                const jsonMatch = html.match(jsonPatterns[i]);
-                if (jsonMatch && jsonMatch[1]) {
-                    lyrics = jsonMatch[1]
-                        .replace(/\\n/g, '\n')
-                        .replace(/\\'/g, "'")
-                        .replace(/\\"/g, '"')
-                        .replace(/\\u[\dA-Fa-f]{4}/g, m => String.fromCharCode(parseInt(m.slice(2), 16)));
-                    console.log('Lyrics extraídas (método 3, pattern', i + 1, '), length:', lyrics.length);
-                    break;
+            if (searchData.message?.body?.track_list?.length) {
+                const trackId = searchData.message.body.track_list[0].track.track_id;
+                console.log('Track ID encontrado:', trackId);
+                
+                const lyricsUrl = `https://api.musixmatch.com/ws/1.1/track.lyrics.get?track_id=${trackId}&apikey=${MUSIXMATCH_KEY}`;
+                const lyricsRes = await fetch(lyricsUrl);
+                const lyricsData = await lyricsRes.json();
+                
+                if (lyricsData.message?.body?.lyrics?.lyrics_body) {
+                    let lyrics = lyricsData.message.body.lyrics.lyrics_body;
+                    lyrics = lyrics.replace(/\*{7}[\s\S]*$/, '').trim();
+                    
+                    if (lyrics.length > 100) {
+                        console.log('SUCCESS: Musixmatch search, length:', lyrics.length);
+                        return res.json({ found: true, lyrics, source: 'musixmatch' });
+                    }
                 }
             }
+        } catch (e) {
+            console.log('Musixmatch search falló:', e.message);
         }
         
-        // Método 4: Buscar entre tags específicos
-        if (!lyrics || lyrics.length < 100) {
-            console.log('\n--- Método 4: Tags específicos ---');
-            const specificMatch = html.match(/class="Lyrics-sc[^"]*"[^>]*>([\s\S]*?)<div class="LyricsFooter/i);
-            if (specificMatch) {
-                lyrics = specificMatch[1]
-                    .replace(/<br\s*\/?>/gi, '\n')
-                    .replace(/<[^>]+>/g, '')
-                    .replace(/&[^;]+;/g, ' ')
-                    .trim();
-                console.log('Lyrics extraídas (método 4), length:', lyrics.length);
+        // ========== FALLBACK: Genius URL ==========
+        console.log('\n--- Buscando URL en Genius ---');
+        try {
+            const geniusUrl = `https://api.genius.com/search?q=${encodeURIComponent(artistNorm + ' ' + songNorm)}`;
+            const geniusRes = await fetch(geniusUrl, {
+                headers: { 'Authorization': 'Bearer ' + GENIUS_TOKEN }
+            });
+            const geniusData = await geniusRes.json();
+            
+            if (geniusData.response?.hits?.length) {
+                const hit = geniusData.response.hits[0].result;
+                console.log('Genius URL:', hit.url);
+                return res.json({ 
+                    found: false, 
+                    geniusUrl: hit.url, 
+                    title: hit.title, 
+                    artist: hit.primary_artist.name,
+                    message: 'Letra no extraíble, usa el link'
+                });
             }
+        } catch (e) {
+            console.log('Genius falló:', e.message);
         }
         
-        // Log de debug si no encontró nada
-        if (!lyrics || lyrics.length < 100) {
-            console.log('\n--- DEBUG: Buscando patrones en HTML ---');
-            console.log('Contiene "data-lyrics-container":', html.includes('data-lyrics-container'));
-            console.log('Contiene "Lyrics__Container":', html.includes('Lyrics__Container'));
-            console.log('Contiene "Lyrics-sc":', html.includes('Lyrics-sc'));
-            console.log('Contiene "lyricsText":', html.includes('lyricsText'));
-        }
-        
-        // ========== RESULTADO FINAL ==========
         console.log('\n========== RESULTADO ==========');
-        if (lyrics && lyrics.length > 100) {
-            lyrics = lyrics.replace(/\n{3,}/g, '\n\n').trim();
-            console.log('SUCCESS: Letra encontrada, length final:', lyrics.length);
-            console.log('Preview:', lyrics.substring(0, 200) + '...');
-            
-            res.json({ 
-                found: true, 
-                lyrics, 
-                title: hit.title, 
-                artist: hit.primary_artist.name, 
-                source: 'genius' 
-            });
-        } else {
-            console.log('FAIL: No se pudo extraer la letra');
-            
-            res.json({ 
-                found: false, 
-                geniusUrl: hit.url, 
-                title: hit.title, 
-                artist: hit.primary_artist.name,
-                message: 'No se pudo extraer la letra automáticamente'
-            });
-        }
+        console.log('FAIL: No se encontró en ninguna fuente');
+        res.json({ found: false, message: 'Letra no encontrada' });
         
     } catch (e) {
         console.error('ERROR GENERAL:', e);

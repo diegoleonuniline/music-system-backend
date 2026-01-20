@@ -38,7 +38,6 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/song-settings', require('./routes/song-settings'));
 
 // Endpoint para buscar letras con Genius
-// Endpoint para buscar letras con Genius
 app.get('/api/lyrics/search', async (req, res) => {
     const { artist, song } = req.query;
     const GENIUS_TOKEN = 'z0TdnaAK55-EqV5J8XKTVJieM0CcqGRWg_2tepJn_0dV5px2GWYt7LiByTL3rj_w';
@@ -48,6 +47,21 @@ app.get('/api/lyrics/search', async (req, res) => {
     }
     
     try {
+        // Primero intentar con lyrics.ovh (más confiable para letras)
+        try {
+            const lyricsOvhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(song)}`;
+            const lyricsRes = await fetch(lyricsOvhUrl);
+            if (lyricsRes.ok) {
+                const lyricsData = await lyricsRes.json();
+                if (lyricsData.lyrics) {
+                    return res.json({ found: true, lyrics: lyricsData.lyrics.trim(), source: 'lyrics.ovh' });
+                }
+            }
+        } catch (e) {
+            console.log('lyrics.ovh falló, intentando Genius...');
+        }
+        
+        // Fallback a Genius
         const searchUrl = `https://api.genius.com/search?q=${encodeURIComponent(artist + ' ' + song)}`;
         const searchRes = await fetch(searchUrl, {
             headers: { 'Authorization': 'Bearer ' + GENIUS_TOKEN }
@@ -55,59 +69,63 @@ app.get('/api/lyrics/search', async (req, res) => {
         const searchData = await searchRes.json();
         
         if (!searchData.response || !searchData.response.hits || !searchData.response.hits.length) {
-            return res.json({ found: false, reason: 'No results from Genius' });
+            return res.json({ found: false });
         }
         
         const hit = searchData.response.hits[0].result;
+        
+        // Obtener página de Genius
         const pageRes = await fetch(hit.url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml'
             }
         });
         const html = await pageRes.text();
         
         let lyrics = '';
         
-        // Método 1: data-lyrics-container
-        let matches = html.match(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi);
-        
-        // Método 2: Lyrics__Container
-        if (!matches || !matches.length) {
-            matches = html.match(/class="Lyrics__Container[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
+        // Buscar JSON con la letra en el HTML
+        const jsonMatch = html.match(/"lyrics":\s*\{[^}]*"plain":\s*"([^"]+)"/);
+        if (jsonMatch) {
+            lyrics = jsonMatch[1]
+                .replace(/\\n/g, '\n')
+                .replace(/\\'/g, "'")
+                .replace(/\\"/g, '"');
         }
         
-        // Método 3: buscar entre etiquetas específicas
-        if (!matches || !matches.length) {
-            const lyricsMatch = html.match(/<div[^>]*Lyrics__Container[^>]*>([\s\S]*?)<\/div>/gi);
-            if (lyricsMatch) matches = lyricsMatch;
-        }
-        
-        if (matches && matches.length) {
-            lyrics = matches.join('\n')
-                .replace(/<br\s*\/?>/gi, '\n')
-                .replace(/<[^>]+>/g, '')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/&#x27;/g, "'")
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&#39;/g, "'")
-                .replace(/&nbsp;/g, ' ')
-                .replace(/\[.*?\]/g, '')
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
+        // Si no, intentar scraping tradicional
+        if (!lyrics) {
+            const matches = html.match(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi) ||
+                           html.match(/class="Lyrics__Container[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
+            
+            if (matches && matches.length) {
+                lyrics = matches.join('\n')
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<[^>]+>/g, '')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#x27;/g, "'")
+                    .replace(/&#39;/g, "'")
+                    .replace(/&nbsp;/g, ' ')
+                    .trim();
+            }
         }
         
         if (lyrics && lyrics.length > 50) {
-            res.json({ found: true, lyrics, title: hit.title, artist: hit.primary_artist.name });
+            res.json({ found: true, lyrics, title: hit.title, artist: hit.primary_artist.name, source: 'genius' });
         } else {
-            res.json({ found: false, reason: 'Lyrics not extracted', url: hit.url });
+            res.json({ found: false, geniusUrl: hit.url });
         }
     } catch (e) {
-        console.error('Error Genius:', e);
-        res.status(500).json({ error: 'Error buscando letra', details: e.message });
+        console.error('Error:', e);
+        res.status(500).json({ error: 'Error buscando letra' });
     }
 });
+
+
+
+
 
 // Ruta de prueba
 app.get('/', (req, res) => {

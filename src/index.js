@@ -70,11 +70,10 @@ app.get('/api/lyrics/search', async (req, res) => {
     console.log('Normalizado - Artist:', artistNorm, '| Song:', songNorm);
     
     try {
-     // ========== INTENTO 1: Letras.com ==========
+  // ========== INTENTO 1: Letras.com ==========
 console.log('\n--- Intentando Letras.com ---');
 try {
     const artistSlug = createSlug(artistNorm);
-    const songSlug = createSlug(songNorm);
     let lyrics = null;
     
     const extractLyrics = (html) => {
@@ -95,54 +94,38 @@ try {
             .trim();
     };
     
-    const validateTitle = (html, expected) => {
-        const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-        if (!titleMatch) return false;
-        const pageTitle = normalizeText(titleMatch[1]).toLowerCase().trim();
-        const exp = expected.toLowerCase().trim();
-        console.log('Título página:', pageTitle, '| Esperado:', exp);
-        return pageTitle === exp || pageTitle.startsWith(exp + ' ') || exp.startsWith(pageTitle + ' ');
-    };
-    
-    // Buscar directo en página del artista por título exacto
-    console.log('Buscando en página del artista...');
+    // Buscar en página del artista por título exacto
+    console.log('Buscando en página del artista:', artistSlug);
     const artistUrl = `https://www.letras.com/${artistSlug}/`;
-    let fetchRes = await fetch(artistUrl, {
+    const artistRes = await fetch(artistUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
     
-    if (fetchRes.ok) {
-        const artistHtml = await fetchRes.text();
+    if (artistRes.ok) {
+        const artistHtml = await artistRes.text();
         
-        // Buscar link por título exacto (case insensitive)
-        const titleRegex = new RegExp(`href="(/${artistSlug}/[^"]+)"[^>]*>\\s*${songNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*<`, 'i');
-        const exactMatch = artistHtml.match(titleRegex);
+        // Buscar link con título exacto (puede tener ID numérico o slug)
+        const songTitleEscaped = songNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const linkRegex = new RegExp(`href="(/${artistSlug}/[^"]+)"[^>]*>([^<]*${songTitleEscaped}[^<]*)<`, 'gi');
+        const matches = [...artistHtml.matchAll(linkRegex)];
         
-        if (exactMatch) {
-            const songUrl = `https://www.letras.com${exactMatch[1]}`;
-            console.log('Link exacto encontrado:', songUrl);
-            const songFetch = await fetch(songUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-            });
-            if (songFetch.ok) {
-                const html = await songFetch.text();
-                if (validateTitle(html, songNorm)) {
-                    lyrics = extractLyrics(html);
-                }
-            }
-        }
+        console.log('Matches encontrados:', matches.length);
         
-        // Si no encontró exacto, probar URL directa
-        if (!lyrics || lyrics.length < 100) {
-            const directUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
-            console.log('Probando URL directa:', directUrl);
-            fetchRes = await fetch(directUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-            });
-            if (fetchRes.ok) {
-                const html = await fetchRes.text();
-                if (validateTitle(html, songNorm)) {
-                    lyrics = extractLyrics(html);
+        // Buscar coincidencia exacta primero
+        for (const match of matches) {
+            const linkTitle = normalizeText(match[2]).toLowerCase().trim();
+            const expected = songNorm.toLowerCase().trim();
+            console.log('Comparando:', linkTitle, '===', expected);
+            
+            if (linkTitle === expected) {
+                const songUrl = `https://www.letras.com${match[1]}`;
+                console.log('Match exacto:', songUrl);
+                const songRes = await fetch(songUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                });
+                if (songRes.ok) {
+                    lyrics = extractLyrics(await songRes.text());
+                    if (lyrics && lyrics.length > 100) break;
                 }
             }
         }

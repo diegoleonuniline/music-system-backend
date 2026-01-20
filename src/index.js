@@ -78,88 +78,89 @@ console.log('\n--- Intentando Letras.com ---');
 try {
     const artistSlug = createSlug(artistNorm);
     const songSlug = createSlug(songNorm);
+    let lyrics = null;
     
-    const directUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
-    console.log('Intentando URL directa:', directUrl);
-    
-    let songRes = await fetch(directUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    console.log('Letras.com direct status:', songRes.status);
-    
-    if (songRes.ok) {
-        const html = await songRes.text();
-        
-        // Validar título de la canción
-        const titleMatch = html.match(/<h1[^>]*class="[^"]*head-title[^"]*"[^>]*>([^<]+)<\/h1>/i) ||
-                           html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-        
-        if (titleMatch) {
-            const pageTitle = normalizeText(titleMatch[1]).toLowerCase().trim();
-            const searchTitle = songNorm.toLowerCase();
-            console.log('Título en página:', pageTitle, '| Buscado:', searchTitle);
-            
-            // Verificar que al menos las primeras palabras coincidan
-            const pageWords = pageTitle.split(/\s+/).slice(0, 3).join(' ');
-            const searchWords = searchTitle.split(/\s+/).slice(0, 3).join(' ');
-            
-            if (!pageWords.includes(searchWords) && !searchWords.includes(pageWords)) {
-                console.log('Título no coincide, saltando...');
-                throw new Error('Título no coincide');
+    // Función para extraer letra
+    const extractLyrics = (html, expectedTitle) => {
+        // Validar título
+        const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+        if (titleMatch && expectedTitle) {
+            const pageTitle = normalizeText(titleMatch[1]).toLowerCase();
+            const expected = expectedTitle.toLowerCase();
+            console.log('Título página:', pageTitle, '| Esperado:', expected);
+            if (!pageTitle.includes(expected.substring(0, 8)) && !expected.includes(pageTitle.substring(0, 8))) {
+                return null;
             }
         }
         
         const lyricMatch = html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>\s*<div/i) ||
                            html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>/i);
+        if (!lyricMatch) return null;
         
-        if (lyricMatch) {
-            let lyrics = lyricMatch[1]
-                .replace(/<br\s*\/?>/gi, '\n')
-                .replace(/<p[^>]*>/gi, '\n')
-                .replace(/<\/p>/gi, '\n')
-                .replace(/<[^>]+>/g, '')
-                .replace(/&nbsp;/g, ' ')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
+        return lyricMatch[1]
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<p[^>]*>/gi, '\n')
+            .replace(/<\/p>/gi, '\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    };
+    
+    // Intento 1: URL directa
+    const directUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
+    console.log('URL directa:', directUrl);
+    
+    let res = await fetch(directUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    
+    if (res.ok) {
+        lyrics = extractLyrics(await res.text(), songNorm);
+    }
+    
+    // Intento 2: Buscar en página del artista
+    if (!lyrics || lyrics.length < 100) {
+        console.log('Buscando en página del artista...');
+        const artistUrl = `https://www.letras.com/${artistSlug}/`;
+        res = await fetch(artistUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        
+        if (res.ok) {
+            const artistHtml = await res.text();
+            // Buscar link que contenga palabras de la canción
+            const songWords = songSlug.split('-').filter(w => w.length > 2);
+            const linkRegex = new RegExp(`href="(/${artistSlug}/[^"]*(?:${songWords.join('|')})[^"]*)"`, 'gi');
+            const matches = [...artistHtml.matchAll(linkRegex)];
             
-            if (lyrics.length > 100) {
-                console.log('SUCCESS: Letras.com, length:', lyrics.length);
-                return res.json({ found: true, lyrics, source: 'letras.com' });
+            console.log('Links encontrados:', matches.length);
+            
+            for (const match of matches.slice(0, 3)) {
+                const songUrl = `https://www.letras.com${match[1]}`;
+                console.log('Probando:', songUrl);
+                res = await fetch(songUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                });
+                if (res.ok) {
+                    lyrics = extractLyrics(await res.text(), songNorm);
+                    if (lyrics && lyrics.length > 100) break;
+                }
             }
         }
     }
-    console.log('Letras.com: no encontró resultado válido');
+    
+    if (lyrics && lyrics.length > 100) {
+        console.log('SUCCESS: Letras.com, length:', lyrics.length);
+        return res.json({ found: true, lyrics, source: 'letras.com' });
+    }
+    console.log('Letras.com: no encontró');
 } catch (e) {
     console.log('Letras.com falló:', e.message);
 }
-        
-        // ========== INTENTO 2: Vagalume (buena para latino) ==========
-        console.log('\n--- Intentando Vagalume ---');
-        try {
-            const vagaUrl = `https://api.vagalume.com.br/search.php?art=${encodeURIComponent(artistNorm)}&mus=${encodeURIComponent(songNorm)}`;
-            console.log('URL:', vagaUrl);
-            
-            const vagaRes = await fetch(vagaUrl);
-            console.log('Vagalume status:', vagaRes.status);
-            
-            if (vagaRes.ok) {
-                const vagaData = await vagaRes.json();
-                
-                if ((vagaData.type === 'exact' || vagaData.type === 'aprox') && vagaData.mus?.[0]?.text) {
-                    const lyrics = vagaData.mus[0].text.trim();
-                    if (lyrics.length > 100) {
-                        console.log('SUCCESS: Vagalume, length:', lyrics.length);
-                        return res.json({ found: true, lyrics, source: 'vagalume' });
-                    }
-                }
-                console.log('Vagalume: no encontró letra');
-            }
-        } catch (e) {
-            console.log('Vagalume falló:', e.message);
-        }
         
         // ========== INTENTO 3: lyrics.ovh ==========
         console.log('\n--- Intentando lyrics.ovh ---');

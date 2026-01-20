@@ -73,69 +73,87 @@ app.get('/api/lyrics/search', async (req, res) => {
    
 
 
-
-      // ========== INTENTO 1: Letras.com ==========
+// ========== INTENTO 1: Letras.com ==========
 console.log('\n--- Intentando Letras.com ---');
 try {
-    const searchQuery = `${artistNorm} ${songNorm}`;
-    const searchUrl = `https://www.letras.com/search/?q=${encodeURIComponent(searchQuery)}`;
-    console.log('Search URL:', searchUrl);
+    const artistSlug = createSlug(artistNorm);
+    const songSlug = createSlug(songNorm);
     
-    const searchRes = await fetch(searchUrl, {
+    // Intento directo primero (más confiable)
+    const directUrl = `https://www.letras.com/${artistSlug}/${songSlug}/`;
+    console.log('Intentando URL directa:', directUrl);
+    
+    let songRes = await fetch(directUrl, {
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'es-ES,es;q=0.9'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
     });
-    console.log('Letras.com search status:', searchRes.status);
     
-    if (searchRes.ok) {
-        const searchHtml = await searchRes.text();
+    // Si falla, buscar pero validando artista
+    if (!songRes.ok || songRes.status === 404) {
+        console.log('URL directa falló, buscando...');
+        const searchUrl = `https://www.letras.com/${artistSlug}/`;
+        const artistPageRes = await fetch(searchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
         
-        // Buscar el primer resultado que coincida con artista y canción
-        const songLinkMatch = searchHtml.match(/<a[^>]*href="(\/[^\/]+\/[^\/]+\/)"[^>]*class="[^"]*gs-title[^"]*"[^>]*>/i) ||
-                              searchHtml.match(/<a[^>]*class="[^"]*gs-title[^"]*"[^>]*href="(\/[^\/]+\/[^\/]+\/)"/i) ||
-                              searchHtml.match(/href="(\/[^\/]+\/\d+\/)"/i);
-        
-        if (songLinkMatch) {
-            const songPath = songLinkMatch[1];
-            const songUrl = `https://www.letras.com${songPath}`;
-            console.log('Song URL encontrada:', songUrl);
+        if (artistPageRes.ok) {
+            const artistHtml = await artistPageRes.text();
+            // Buscar la canción en la página del artista
+            const songRegex = new RegExp(`href="(/${artistSlug}/[^"]+)"[^>]*>[^<]*${songNorm.split(' ')[0]}`, 'i');
+            const match = artistHtml.match(songRegex);
             
-            const songRes = await fetch(songUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                }
-            });
-            
-            if (songRes.ok) {
-                const html = await songRes.text();
-                const lyricMatch = html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>\s*<div/i) ||
-                                   html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>/i);
-                
-                if (lyricMatch) {
-                    let lyrics = lyricMatch[1]
-                        .replace(/<br\s*\/?>/gi, '\n')
-                        .replace(/<p[^>]*>/gi, '\n')
-                        .replace(/<\/p>/gi, '\n')
-                        .replace(/<[^>]+>/g, '')
-                        .replace(/&nbsp;/g, ' ')
-                        .replace(/&amp;/g, '&')
-                        .replace(/&quot;/g, '"')
-                        .replace(/&#39;/g, "'")
-                        .replace(/\n{3,}/g, '\n\n')
-                        .trim();
-                    
-                    if (lyrics.length > 100) {
-                        console.log('SUCCESS: Letras.com, length:', lyrics.length);
-                        return res.json({ found: true, lyrics, source: 'letras.com' });
-                    }
-                }
+            if (match) {
+                const songUrl = `https://www.letras.com${match[1]}`;
+                console.log('Canción encontrada en página del artista:', songUrl);
+                songRes = await fetch(songUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                });
             }
         }
-        console.log('Letras.com: no se encontró resultado');
     }
+    
+    if (songRes && songRes.ok) {
+        const html = await songRes.text();
+        
+        // Verificar que el artista en la página coincida
+        const pageArtistMatch = html.match(/<span class="artist"[^>]*>([^<]+)<\/span>/i) ||
+                                html.match(/<h2[^>]*class="[^"]*head-title[^"]*"[^>]*>([^<]+)<\/h2>/i);
+        
+        if (pageArtistMatch) {
+            const pageArtist = normalizeText(pageArtistMatch[1]).toLowerCase();
+            if (!pageArtist.includes(artistSlug.replace(/-/g, ' ').substring(0, 5))) {
+                console.log('Artista no coincide:', pageArtist, 'vs', artistSlug);
+                throw new Error('Artista no coincide');
+            }
+        }
+        
+        const lyricMatch = html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>\s*<div/i) ||
+                           html.match(/<div class="lyric-original"[^>]*>([\s\S]*?)<\/div>/i) ||
+                           html.match(/<div[^>]*class="[^"]*lyric[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        
+        if (lyricMatch) {
+            let lyrics = lyricMatch[1]
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<p[^>]*>/gi, '\n')
+                .replace(/<\/p>/gi, '\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            
+            if (lyrics.length > 100) {
+                console.log('SUCCESS: Letras.com, length:', lyrics.length);
+                return res.json({ found: true, lyrics, source: 'letras.com' });
+            }
+        }
+    }
+    console.log('Letras.com: no se encontró resultado válido');
 } catch (e) {
     console.log('Letras.com falló:', e.message);
 }

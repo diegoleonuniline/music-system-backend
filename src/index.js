@@ -72,8 +72,7 @@ app.get('/api/lyrics/search', async (req, res) => {
     try {
 
 
-
-        // ========== INTENTO 1: Letras.com ==========
+// ========== INTENTO 1: Letras.com ==========
 console.log('\n--- Intentando Letras.com ---');
 try {
     const artistSlug = createSlug(artistNorm);
@@ -105,26 +104,25 @@ try {
     
     if (artistRes.ok) {
         const artistHtml = await artistRes.text();
+        const songTitleLower = songNorm.toLowerCase().trim();
         
-        // Buscar: [Título](/artista/id/ "Título") o href="/artista/id/"...>Título
-        const songTitleLower = songNorm.toLowerCase();
-        const linkRegex = /\[([^\]]+)\]\((\/[^)]+\/)\s*"[^"]*"\)|\*\s*\[([^\]]+)\]\((\/[^)]+)\)/gi;
+        // Log para debug - ver qué hay en el HTML
+        console.log('HTML length:', artistHtml.length);
+        
+        // Buscar todos los hrefs del artista
+        const hrefRegex = new RegExp(`href="(/${artistSlug}/[^"]+)"[^>]*>([^<]+)<`, 'gi');
         let match;
         let foundUrl = null;
         
-        while ((match = linkRegex.exec(artistHtml)) !== null) {
-            const title = (match[1] || match[3] || '').trim();
-            const url = match[2] || match[4];
+        while ((match = hrefRegex.exec(artistHtml)) !== null) {
+            const url = match[1];
+            const title = match[2].trim();
+            const titleNorm = normalizeText(title).toLowerCase().trim();
             
-            if (title && url && url.includes(artistSlug)) {
-                const titleNorm = normalizeText(title).toLowerCase().trim();
-                console.log('Encontrado:', titleNorm);
-                
-                if (titleNorm === songTitleLower) {
-                    foundUrl = url.endsWith('/') ? url : url + '/';
-                    console.log('Match exacto:', foundUrl);
-                    break;
-                }
+            if (titleNorm === songTitleLower) {
+                foundUrl = url;
+                console.log('Match exacto encontrado:', title, '->', url);
+                break;
             }
         }
         
@@ -137,6 +135,8 @@ try {
             if (songRes.ok) {
                 lyrics = extractLyrics(await songRes.text());
             }
+        } else {
+            console.log('No se encontró match exacto para:', songTitleLower);
         }
     }
     

@@ -38,6 +38,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/song-settings', require('./routes/song-settings'));
 
 // Endpoint para buscar letras con Genius
+// Endpoint para buscar letras con Genius
 app.get('/api/lyrics/search', async (req, res) => {
     const { artist, song } = req.query;
     const GENIUS_TOKEN = 'z0TdnaAK55-EqV5J8XKTVJieM0CcqGRWg_2tepJn_0dV5px2GWYt7LiByTL3rj_w';
@@ -54,17 +55,34 @@ app.get('/api/lyrics/search', async (req, res) => {
         const searchData = await searchRes.json();
         
         if (!searchData.response || !searchData.response.hits || !searchData.response.hits.length) {
-            return res.json({ found: false });
+            return res.json({ found: false, reason: 'No results from Genius' });
         }
         
         const hit = searchData.response.hits[0].result;
-        const pageRes = await fetch(hit.url);
+        const pageRes = await fetch(hit.url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
         const html = await pageRes.text();
         
         let lyrics = '';
-        const matches = html.match(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi);
         
-        if (matches) {
+        // Método 1: data-lyrics-container
+        let matches = html.match(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi);
+        
+        // Método 2: Lyrics__Container
+        if (!matches || !matches.length) {
+            matches = html.match(/class="Lyrics__Container[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
+        }
+        
+        // Método 3: buscar entre etiquetas específicas
+        if (!matches || !matches.length) {
+            const lyricsMatch = html.match(/<div[^>]*Lyrics__Container[^>]*>([\s\S]*?)<\/div>/gi);
+            if (lyricsMatch) matches = lyricsMatch;
+        }
+        
+        if (matches && matches.length) {
             lyrics = matches.join('\n')
                 .replace(/<br\s*\/?>/gi, '\n')
                 .replace(/<[^>]+>/g, '')
@@ -75,17 +93,19 @@ app.get('/api/lyrics/search', async (req, res) => {
                 .replace(/&gt;/g, '>')
                 .replace(/&#39;/g, "'")
                 .replace(/&nbsp;/g, ' ')
+                .replace(/\[.*?\]/g, '')
+                .replace(/\n{3,}/g, '\n\n')
                 .trim();
         }
         
-        if (lyrics) {
+        if (lyrics && lyrics.length > 50) {
             res.json({ found: true, lyrics, title: hit.title, artist: hit.primary_artist.name });
         } else {
-            res.json({ found: false });
+            res.json({ found: false, reason: 'Lyrics not extracted', url: hit.url });
         }
     } catch (e) {
         console.error('Error Genius:', e);
-        res.status(500).json({ error: 'Error buscando letra' });
+        res.status(500).json({ error: 'Error buscando letra', details: e.message });
     }
 });
 
